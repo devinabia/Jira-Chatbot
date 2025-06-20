@@ -18,9 +18,7 @@ from .endpoints import (
 def create_api_router() -> APIRouter:
     api_router = APIRouter()
 
-    bot_repository = BotRepository(mongodb.client)
-
-    bot_service = BotService(bot_repository)
+    bot_service = BotService()
 
     profile_router = BotRouter(bot_service)
 

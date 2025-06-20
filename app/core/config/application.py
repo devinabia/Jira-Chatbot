@@ -19,19 +19,19 @@ class AppSettings(BaseSettings):
     ALLOWED_HOSTS: List[str] = ["*"]
     
 
-class DatabaseSettings(BaseSettings):
-    DB_MONGODB_URL: str = config_secrets.DB_MONGODB_URL
-    DB_MONGODB_DB_NAME: str = config_secrets.DB_MONGODB_DB_NAME
+# class DatabaseSettings(BaseSettings):
+#     DB_MONGODB_URL: str = config_secrets.DB_MONGODB_URL
+#     DB_MONGODB_DB_NAME: str = config_secrets.DB_MONGODB_DB_NAME
     
-    @property
-    def mongodb_connection_params(self) -> dict:
-        return {
-            "maxPoolSize": 10,
-            "minPoolSize": 1,
-            "maxIdleTimeMS": 45000,
-            "waitQueueTimeoutMS": 5000,
-            "serverSelectionTimeoutMS": 5000,
-        }
+#     @property
+#     def mongodb_connection_params(self) -> dict:
+#         return {
+#             "maxPoolSize": 10,
+#             "minPoolSize": 1,
+#             "maxIdleTimeMS": 45000,
+#             "waitQueueTimeoutMS": 5000,
+#             "serverSelectionTimeoutMS": 5000,
+#         }
 
 
 class SecuritySettings(BaseSettings):
@@ -43,7 +43,7 @@ class SecuritySettings(BaseSettings):
 class Settings:
     def __init__(self):
         self.app = AppSettings()
-        self.db = DatabaseSettings()
+        # self.db = DatabaseSettings()
         self.security = SecuritySettings()
 
 

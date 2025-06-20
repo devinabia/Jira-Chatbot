@@ -11,8 +11,7 @@ load_dotenv()
 
 
 class BotService:
-    def __init__(self, bot_repository: BotRepository):
-        self.bot_repository = bot_repository
+    def __init__(self):
 
         genai.configure(api_key=config_secrets.GEMINI_KEY)
         self.llm = genai.GenerativeModel(

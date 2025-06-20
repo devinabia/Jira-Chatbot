@@ -18,11 +18,6 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 
 from app.api.v1.routes import create_api_router
 from app.core.config import settings
-from app.core.config.database import (
-    mongodb,
-    connect_to_mongodb,
-    close_mongodb_connection,
-)
 from app.core.exceptions import setup_exception_handlers
 from app.core.middlewares import (
     RequestIDMiddleware,
@@ -213,19 +208,6 @@ async def lifespan(app: FastAPI):
     logger.info("Application is starting up...")
 
     try:
-        logger.info("Attempting to connect to MongoDB...")
-        await connect_to_mongodb(
-            settings.db.DB_MONGODB_URL, **settings.db.mongodb_connection_params
-        )
-        app.mongodb_client = mongodb.client
-        app.mongodb = app.mongodb_client[settings.db.DB_MONGODB_DB_NAME]
-        logger.info("Successfully connected to MongoDB")
-
-    except Exception as e:
-        logger.error(f"Failed to connect to MongoDB: {str(e)}", exc_info=True)
-        raise
-
-    try:
         await startup_tasks(app)
     except Exception as e:
         logger.error(f"Error during startup tasks: {str(e)}", exc_info=True)
@@ -238,12 +220,6 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down application...")
-
-    try:
-        await close_mongodb_connection()
-        logger.info("MongoDB connection closed")
-    except Exception as e:
-        logger.error(f"Error closing MongoDB connection: {str(e)}", exc_info=True)
 
     try:
         await cleanup_tasks(app)

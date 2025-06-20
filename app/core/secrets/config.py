@@ -10,9 +10,6 @@ class Secrets:
     GEMINI_LLM = "gemini-2.5-flash-preview-04-17"
     QDRANT_COLLECTION = "jira_board"
 
-    DB_MONGODB_URL = os.getenv("DB_MONGODB_URL")
-    DB_MONGODB_DB_NAME = os.getenv("DB_MONGODB_DB_NAME")
-
     OPENAI_KEY = os.getenv("OPENAI_KEY")
     GEMINI_KEY = os.getenv("GEMINI_KEY")
     QDRANT_URL = os.getenv("QDRANT_URL")
