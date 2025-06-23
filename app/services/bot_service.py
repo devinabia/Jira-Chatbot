@@ -47,12 +47,14 @@ class BotService:
                 query_vector=query_vector,
                 limit=5,
                 with_payload=True,
+                score_threshold=0.4,
             )
 
             if not search_results:
                 return {
                     "status": "success",
-                    "retrieved_content": "No relevant information found.",
+                    "query": user_query,
+                    "retrieved_content": [],
                     "sources": [],
                     "total_pages_searched": 0,
                 }
@@ -142,8 +144,10 @@ class BotService:
             if search_result["status"] == "error":
                 return f"❌ Error: {search_result['message']}"
 
-            context = self._prepare_context(search_result["retrieved_content"])
+            if not search_result["retrieved_content"]:
+                return "I couldn't find any information about that topic in your Jira or Confluence."
 
+            context = self._prepare_context(search_result["retrieved_content"])
             response = await self._generate_response(
                 user_query, context, search_result["sources"]
             )
@@ -158,15 +162,22 @@ class BotService:
         if not retrieved_content:
             return "No relevant information found in the knowledge base."
 
+        if isinstance(retrieved_content, str):
+            return retrieved_content
+
         context_parts = []
         for i, doc in enumerate(retrieved_content, 1):
+            if isinstance(doc, str):
+                context_parts.append(f"Document {i}: {doc}")
+                continue
+
             score_info = (
                 f" (Relevance: {doc.get('score', 0):.3f})" if doc.get("score") else ""
             )
             context_part = f"""
-                Document {i}: {doc['title']}{score_info} (Space: {doc['space']})
-                Content: {doc['content']}
-                URL: {doc['url']}
+                Document {i}: {doc.get('title', 'Unknown')}{score_info} (Space: {doc.get('space', 'Unknown')})
+                Content: {doc.get('content', '')}
+                URL: {doc.get('url', '')}
                 ---"""
             context_parts.append(context_part)
 
@@ -185,9 +196,9 @@ class BotService:
         - Keep responses concise but complete
 
         Guidelines:
-        - DO NOT sound like a bot — avoid phrases like “Based on the provided context”
+        - DO NOT sound like a bot — avoid phrases like "Based on the provided context"
         - If you can't find relevant information, say:
-        “I couldn’t find any information about **[topic]** in your Jira or Confluence.”
+        "I couldn't find any information about **[topic]** in your Jira or Confluence."
         - Reference document names or ticket IDs when possible
         - Use bullet points and formatting for clear, scannable responses
         - Maintain a conversational and professional tone
