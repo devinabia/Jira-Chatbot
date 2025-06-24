@@ -32,11 +32,11 @@ class QdrantService:
         self.collection_name = config_secrets.QDRANT_COLLECTION
 
         # Use the working credentials format
-        self.confluence_base_url = "https://inabia.atlassian.net/wiki"
-        self.jira_base_url = "https://inabia.atlassian.net"
+        self.confluence_base_url = f"{config_secrets.JIRA_CONFLUENCE_URL}/wiki"
+        self.jira_base_url = config_secrets.JIRA_CONFLUENCE_URL
         self.auth = (
-            "taha@inabia.com",
-            "ATATT3xFfGF0Yv_srNuQBdWOQoYZnNIzZennIbRgS2iTBcXMQt3YaoK4Idi7yTcIv--_33Pc-NDoagyb88hr7hdrrP3t8VDqArq82UU13EPVNUXD4oLMDHFklBm2dq1EFBNgQipGCm8oE5z4gIEMKe1JeP8aQVOirtvcsSc7s5X5WCtxDX0m4Hc=F3FDA8CF",
+            config_secrets.CONFLUENCE_USER,
+            config_secrets.CONFLUENCE_TOKEN,
         )
 
     def create_basic_auth_header(self, username: str, token: str) -> str:
@@ -192,42 +192,6 @@ class QdrantService:
                                 html_content = page_content["body"]["storage"]["value"]
                                 soup = BeautifulSoup(html_content, "html.parser")
 
-                                # Extract images
-                                images_info = []
-
-                                # Regular images
-                                for img in soup.find_all("img"):
-                                    img_data = {
-                                        "src": img.get("src", ""),
-                                        "alt": img.get("alt", ""),
-                                        "title": img.get("title", ""),
-                                        "width": img.get("width", ""),
-                                        "height": img.get("height", ""),
-                                        "type": "embedded",
-                                    }
-                                    if img_data["src"]:
-                                        images_info.append(img_data)
-
-                                # Confluence macro images
-                                for ac_img in soup.find_all("ac:image"):
-                                    attachment = ac_img.find("ri:attachment")
-                                    if attachment:
-                                        filename = attachment.get("ri:filename", "")
-                                        img_data = {
-                                            "src": f"/wiki/download/attachments/{page_id}/{filename}",
-                                            "alt": filename,
-                                            "title": filename,
-                                            "width": ac_img.get("ac:width", ""),
-                                            "height": ac_img.get("ac:height", ""),
-                                            "type": "attachment",
-                                        }
-                                        images_info.append(img_data)
-
-                                if images_info:
-                                    logging.debug(
-                                        f"Found {len(images_info)} images in page: {page_content['title']}"
-                                    )
-
                                 # Clean HTML content
                                 for script in soup(["script", "style"]):
                                     script.decompose()
@@ -255,7 +219,6 @@ class QdrantService:
                                                 "version", {}
                                             ).get("when", ""),
                                             "type": "page",
-                                            "images": images_info,
                                         }
                                     )
 

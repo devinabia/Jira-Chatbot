@@ -47,14 +47,12 @@ class BotService:
                 query_vector=query_vector,
                 limit=5,
                 with_payload=True,
-                score_threshold=0.4,
             )
 
             if not search_results:
                 return {
                     "status": "success",
-                    "query": user_query,
-                    "retrieved_content": [],
+                    "retrieved_content": [],  # Return empty list instead of string
                     "sources": [],
                     "total_pages_searched": 0,
                 }
@@ -65,40 +63,7 @@ class BotService:
 
             for result in search_results:
                 payload = result.payload
-                content_with_images = payload.get("text", "")
-
-                if payload.get("images") and len(payload["images"]) > 0:
-                    image_context = "\n\n🖼️ VISUAL CONTENT AVAILABLE:\n"
-                    for i, img in enumerate(payload["images"], 1):
-                        image_context += f"{i}. "
-
-                        if img.get("alt"):
-                            image_context += f"Image: {img['alt']}"
-                        elif img.get("title"):
-                            image_context += f"Image: {img['title']}"
-                        else:
-                            image_context += "Image (no description available)"
-
-                        if img.get("src"):
-                            img_url = img["src"]
-                            if img_url.startswith("/"):
-                                img_url = f"{config_secrets.JIRA_URL}{img_url}"
-                            elif img_url.startswith("http"):
-                                pass
-                            else:
-                                img_url = (
-                                    f"{config_secrets.JIRA_CONFLUENCE_URL}{img_url}"
-                                )
-
-                            image_context += f"\n   📎 Image URL: {img_url}"
-
-                        if img.get("width") or img.get("height"):
-                            image_context += f"\n   📐 Size: {img.get('width', '?')}x{img.get('height', '?')}"
-
-                        image_context += "\n\n"
-
-                    image_context += "💡 TIP: Click the image URLs above to view the actual diagrams/images.\n"
-                    content_with_images += image_context
+                content = payload.get("text", "")
 
                 retrieved_content.append(
                     {
@@ -106,9 +71,8 @@ class BotService:
                         "space": payload.get(
                             "space", payload.get("project", "Unknown")
                         ),
-                        "content": content_with_images,
+                        "content": content,
                         "url": payload.get("url", ""),
-                        "images": payload.get("images", []),
                         "score": result.score,
                     }
                 )
@@ -144,10 +108,8 @@ class BotService:
             if search_result["status"] == "error":
                 return f"❌ Error: {search_result['message']}"
 
-            if not search_result["retrieved_content"]:
-                return "I couldn't find any information about that topic in your Jira or Confluence."
-
             context = self._prepare_context(search_result["retrieved_content"])
+
             response = await self._generate_response(
                 user_query, context, search_result["sources"]
             )
@@ -159,29 +121,31 @@ class BotService:
 
     def _prepare_context(self, retrieved_content) -> str:
         """Prepare context from retrieved documents"""
-        if not retrieved_content:
+        # Handle case where retrieved_content is a string (no results found)
+        if isinstance(retrieved_content, str) or not retrieved_content:
             return "No relevant information found in the knowledge base."
-
-        if isinstance(retrieved_content, str):
-            return retrieved_content
 
         context_parts = []
         for i, doc in enumerate(retrieved_content, 1):
-            if isinstance(doc, str):
-                context_parts.append(f"Document {i}: {doc}")
-                continue
-
-            score_info = (
-                f" (Relevance: {doc.get('score', 0):.3f})" if doc.get("score") else ""
-            )
-            context_part = f"""
-                Document {i}: {doc.get('title', 'Unknown')}{score_info} (Space: {doc.get('space', 'Unknown')})
-                Content: {doc.get('content', '')}
-                URL: {doc.get('url', '')}
+            # Ensure doc is a dictionary before calling .get()
+            if isinstance(doc, dict):
+                score_info = (
+                    f" (Relevance: {doc.get('score', 0):.3f})"
+                    if doc.get("score")
+                    else ""
+                )
+                context_part = f"""
+                Document {i}: {doc['title']}{score_info} (Space: {doc['space']})
+                Content: {doc['content']}
+                URL: {doc['url']}
                 ---"""
-            context_parts.append(context_part)
+                context_parts.append(context_part)
 
-        return "\n".join(context_parts)
+        return (
+            "\n".join(context_parts)
+            if context_parts
+            else "No relevant information found in the knowledge base."
+        )
 
     async def _generate_response(self, user_query: str, context: str, sources) -> str:
 
@@ -191,7 +155,6 @@ class BotService:
         - Answer questions using ONLY the provided context from Jira and Confluence
         - Be accurate — if the answer isn't in the context, say so clearly and naturally  
         - Include source references when available
-        - Mention visual content and include image URLs if applicable
         - Use markdown formatting for better readability
         - Keep responses concise but complete
 
@@ -210,7 +173,7 @@ class BotService:
         **Context:**
         {context}
 
-        Please provide a helpful answer based on the above context. If images are mentioned, include their URLs. Format your response with markdown."""
+        Please provide a helpful answer based on the above context. Format your response with markdown."""
 
         try:
             response = await asyncio.to_thread(self.llm.generate_content, prompt)
