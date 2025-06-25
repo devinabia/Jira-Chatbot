@@ -56,7 +56,7 @@ class BotService:
                 # collection_name=config_secrets.QDRANT_COLLECTION,
                 collection_name=config_secrets.QDRANT_COLLECTION,
                 query_vector=query_vector,
-                limit=5,
+                limit=10,
                 with_payload=True,
             )
             if not search_results:
@@ -182,7 +182,8 @@ class BotService:
         - If you can't find relevant information, say:
         "I couldn't find any information about *[topic]* in your Jira or Confluence."
         - Use single asterisks (*text*) for bold, NOT double asterisks (**text**)
-        - DO NOT include sources when no relevant information is found
+        - If no relevant information is found, DO NOT include any sources in your response
+        - NEVER add sources when you say information wasn't found
         - Maintain a conversational and professional tone
 
         *Question:* {user_query}
@@ -190,7 +191,7 @@ class BotService:
         *Context:*
         {context}
 
-        Provide a brief, helpful answer (max 3-4 lines) formatted for Slack. Only relevant sources will be added separately."""
+        Provide a brief, helpful answer (max 3-4 lines) formatted for Slack. Do NOT include sources if no relevant information is found."""
 
         try:
             response = await asyncio.to_thread(
@@ -210,7 +211,20 @@ class BotService:
 
             response_text = response.choices[0].message.content.strip()
 
-            if sources:
+            no_info_phrases = [
+                "couldn't find any information",
+                "couldn't find information",
+                "no information",
+                "not found",
+                "don't have information",
+                "no relevant information",
+            ]
+
+            response_lower = response_text.lower()
+            no_info_found = any(phrase in response_lower for phrase in no_info_phrases)
+
+            # Only add sources if information was actually found and used
+            if sources and not no_info_found:
                 sources_text = "\n\n📚 *Sources:*\n"
                 for source in sources[:3]:
                     try:
