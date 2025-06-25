@@ -456,11 +456,6 @@ class QdrantService:
         try:
             logging.info("Starting data dump to Qdrant...")
 
-            # Clear and recreate collection
-            logging.info("Clearing existing collection...")
-            self.clear_collection()
-            self.create_collection()
-
             # Extract data only from Confluence
             confluence_docs = []
             jira_docs = []  # Keep empty for now
@@ -522,6 +517,9 @@ class QdrantService:
                         f"Error processing document {doc.get('title', 'unknown')}: {e}"
                     )
                     continue
+
+            self.clear_collection()
+            self.create_collection()
 
             # Upload to Qdrant in batches
             logging.info(f"Uploading {len(points)} chunks to Qdrant...")
