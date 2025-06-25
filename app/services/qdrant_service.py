@@ -3,19 +3,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from atlassian import Confluence, Jira
 from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer
-import uuid
-import time
-from typing import List, Dict, Any
-import logging
-from app.core.secrets import config_secrets
-
-
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
-from atlassian import Confluence, Jira
-from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer
+from openai import OpenAI
+import asyncio
 import uuid
 import time
 from typing import List, Dict, Any
@@ -26,9 +15,15 @@ from app.core.secrets import config_secrets
 class QdrantService:
     def __init__(self):
         self.qdrant_client = QdrantClient(
-            url=config_secrets.QDRANT_URL, api_key=config_secrets.QDRANT_API_KEY
+            url=config_secrets.QDRANT_URL,
+            api_key=config_secrets.QDRANT_API_KEY,
+            prefer_grpc=False,
+            check_compatibility=False,
         )
-        self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
+
+        # Replace SentenceTransformer with OpenAI client
+        self.openai_client = OpenAI(api_key=config_secrets.OPENAI_API_KEY)
+
         self.collection_name = config_secrets.QDRANT_COLLECTION
 
         # Use the working credentials format
@@ -39,13 +34,49 @@ class QdrantService:
             config_secrets.CONFLUENCE_TOKEN,
         )
 
-    def create_basic_auth_header(self, username: str, token: str) -> str:
-        """Create basic auth header for manual API calls"""
-        import base64
+    async def _get_embedding(self, text: str) -> list:
+        """Get embedding using OpenAI API with budget-friendly settings"""
+        try:
+            response = await asyncio.to_thread(
+                self.openai_client.embeddings.create,
+                input=text,
+                model="text-embedding-3-small",  # Budget-friendly choice
+                dimensions=1024,  # Sweet spot for quality vs cost
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logging.error(f"Error getting embedding: {e}")
+            raise
 
-        credentials = f"{username}:{token}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
-        return f"Basic {encoded_credentials}"
+    def _get_embeddings_batch(self, texts: List[str]) -> List[list]:
+        """Get embeddings for multiple texts in a single API call"""
+        try:
+            # OpenAI allows up to 2048 inputs per request for embedding-3-small
+            batch_size = 100  # Conservative batch size to avoid rate limits
+            embeddings = []
+
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+
+                response = self.openai_client.embeddings.create(
+                    input=batch, model="text-embedding-3-small", dimensions=1024
+                )
+
+                batch_embeddings = [item.embedding for item in response.data]
+                embeddings.extend(batch_embeddings)
+
+                # Rate limiting - be nice to the API
+                if i + batch_size < len(texts):
+                    time.sleep(0.1)
+
+                logging.info(
+                    f"Processed embedding batch {i//batch_size + 1}/{(len(texts) + batch_size - 1)//batch_size}"
+                )
+
+            return embeddings
+        except Exception as e:
+            logging.error(f"Error getting batch embeddings: {e}")
+            raise
 
     def create_collection(self):
         """Create Qdrant collection if it doesn't exist"""
@@ -56,7 +87,10 @@ class QdrantService:
             if self.collection_name not in collection_names:
                 self.qdrant_client.create_collection(
                     collection_name=self.collection_name,
-                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                    vectors_config=VectorParams(
+                        size=1024,  # Updated to match OpenAI embedding dimensions
+                        distance=Distance.COSINE,
+                    ),
                 )
                 logging.info(f"Created collection: {self.collection_name}")
             else:
@@ -484,30 +518,26 @@ class QdrantService:
             # Process documents into chunks and create embeddings
             logging.info(f"Processing {len(all_documents)} documents into chunks...")
             points = []
+            all_chunks = []
+            chunk_metadata = []
 
+            # First pass: collect all chunks
             for doc_idx, doc in enumerate(all_documents):
                 try:
                     chunks = self.chunk_text(doc["text"])
 
                     for i, chunk in enumerate(chunks):
                         if chunk.strip():
-                            embedding = self.encoder.encode(chunk).tolist()
-
-                            point = PointStruct(
-                                id=str(uuid.uuid4()),
-                                vector=embedding,
-                                payload={
+                            all_chunks.append(chunk)
+                            chunk_metadata.append(
+                                {
                                     **doc,
-                                    "text": chunk,
                                     "chunk_index": i,
                                     "total_chunks": len(chunks),
-                                },
+                                }
                             )
-                            points.append(point)
 
-                    if (
-                        doc_idx + 1
-                    ) % 10 == 0:  # More frequent logging since we have fewer docs
+                    if (doc_idx + 1) % 10 == 0:
                         logging.info(
                             f"Processed {doc_idx + 1}/{len(all_documents)} documents"
                         )
@@ -517,6 +547,24 @@ class QdrantService:
                         f"Error processing document {doc.get('title', 'unknown')}: {e}"
                     )
                     continue
+
+            # Second pass: get embeddings in batches (more efficient)
+            logging.info(f"Getting embeddings for {len(all_chunks)} chunks...")
+            embeddings = self._get_embeddings_batch(all_chunks)
+
+            # Third pass: create points
+            for i, (chunk, metadata, embedding) in enumerate(
+                zip(all_chunks, chunk_metadata, embeddings)
+            ):
+                point = PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=embedding,
+                    payload={
+                        **metadata,
+                        "text": chunk,
+                    },
+                )
+                points.append(point)
 
             self.clear_collection()
             self.create_collection()

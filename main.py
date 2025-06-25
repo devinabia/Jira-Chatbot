@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 slack_app = App(
-    token=os.environ.get("SLACK_BOT_TOKEN"),
-    signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
+    token=config_secrets.SLACK_BOT_TOKEN,
+    signing_secret=config_secrets.SLACK_SIGNING_SECRET,
 )
 
 
@@ -80,13 +80,13 @@ def handle_app_mention(event, say):
             )
             return
 
-        say("🔍 Searching Confluence and Jira...")
+        # say("🔍 Searching Confluence and Jira...")
 
         answer = call_api(user_query)
 
         say(
             {
-                "text": f"💡 Answer:\n\n{answer}",
+                "text": f"{answer}",
                 "unfurl_links": True,
                 "unfurl_media": True,
             }
@@ -115,11 +115,11 @@ def handle_dm_message(message, say):
         if user_query.lower().startswith("ask"):
             return
 
-        say("🔍 Searching Confluence and Jira...")
+        # say("🔍 Searching Confluence and Jira...")
 
         answer = call_api(user_query)
 
-        say(f"💡 Answer:\n\n{answer}")
+        say(f"{answer}")
 
     except Exception as e:
         logger.error(f"Error handling DM message: {e}")
@@ -141,13 +141,13 @@ def handle_ask_message(message, say):
             )
             return
 
-        say("🔍 Searching Confluence and Jira...")
+        # say("🔍 Searching Confluence and Jira...")
 
         answer = call_api(user_query)
 
         say(
             {
-                "text": f"💡 Answer:\n\n{answer}",
+                "text": f"{answer}",
                 "unfurl_links": True,
                 "unfurl_media": True,
             }
@@ -183,7 +183,7 @@ def handle_slash_command(ack, respond, command):
         respond(
             {
                 "response_type": "in_channel",
-                "text": f"💡 *{user_name} asked:* {query}\n\n{answer}",
+                "text": f"💡 *{answer}",
                 "unfurl_links": True,
                 "unfurl_media": True,
             }

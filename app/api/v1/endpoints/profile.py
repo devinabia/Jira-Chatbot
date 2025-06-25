@@ -22,6 +22,13 @@ class BotRouter:
             methods=["POST"],
         )
 
+        self.router.add_api_route(
+            "/test-query",
+            self.controller.ask_user,
+            methods=["POST"],
+        )
+
+
     async def handle_ask_query(
         self, request: Request, background_tasks: BackgroundTasks
     ):

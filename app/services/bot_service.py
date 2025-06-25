@@ -6,6 +6,8 @@ from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 import asyncio
+from openai import OpenAI
+from app.utilities import Utils
 
 load_dotenv()
 
@@ -29,8 +31,18 @@ class BotService:
             prefer_grpc=False,
             check_compatibility=False,
         )
+        self.openai_client = OpenAI(api_key=config_secrets.OPENAI_API_KEY)
+        # self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
 
-        self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
+    async def _get_embedding(self, text: str) -> list:
+        """Get embedding using OpenAI API"""
+        response = await asyncio.to_thread(
+            self.openai_client.embeddings.create,
+            input=text,
+            model="text-embedding-3-small",
+            dimensions=1024,
+        )
+        return response.data[0].embedding
 
     async def search_confluence_knowledge(self, user_query: str) -> Dict[str, Any]:
         """Search knowledge base and return retrieved content"""
@@ -38,17 +50,15 @@ class BotService:
             if not user_query.strip():
                 return {"status": "error", "message": "Query cannot be empty"}
 
-            query_vector = await asyncio.to_thread(self.encoder.encode, user_query)
-            query_vector = query_vector.tolist()
-
+            query_vector = await self._get_embedding(user_query)
             search_results = await asyncio.to_thread(
                 self.qdrant_client.search,
-                collection_name="jira_board",
+                # collection_name=config_secrets.QDRANT_COLLECTION,
+                collection_name=config_secrets.QDRANT_COLLECTION,
                 query_vector=query_vector,
                 limit=5,
                 with_payload=True,
             )
-
             if not search_results:
                 return {
                     "status": "success",
@@ -148,45 +158,69 @@ class BotService:
         )
 
     async def _generate_response(self, user_query: str, context: str, sources) -> str:
-
-        prompt = f"""You are a helpful assistant for the Inabia team, answering questions using internal documentation from **Jira** and **Confluence**.
+        prompt = f"""You are a helpful assistant for the Inabia team, answering questions using internal documentation from Jira and Confluence.
 
         Your role:
         - Answer questions using ONLY the provided context from Jira and Confluence
-        - Be accurate — if the answer isn't in the context, say so clearly and naturally  
-        - Include source references when available
-        - Use markdown formatting for better readability
-        - Keep responses concise but complete
+        - Be accurate — if the answer isn't in the context, say so clearly and naturally
+        - Keep responses to 3-4 lines maximum
+        - Format for Slack using only supported markdown
 
-        Guidelines:
+        Slack Formatting Guidelines:
+        - Use *bold* for emphasis (single asterisks)
+        - Use _italic_ for secondary emphasis
+        - Use `code` for technical terms
+        - Use • for bullet points if needed
+        - For links, just use the plain URL (no markdown link syntax)
+        - DO NOT use headers (# ## ###) - Slack doesn't support them
+        - DO NOT use [text](url) link format - Slack doesn't support it
+        - Keep formatting minimal and clean
+
+        Response Guidelines:
         - DO NOT sound like a bot — avoid phrases like "Based on the provided context"
+        - Keep answers concise and direct
         - If you can't find relevant information, say:
-        "I couldn't find any information about **[topic]** in your Jira or Confluence."
-        - Reference document names or ticket IDs when possible
-        - Use bullet points and formatting for clear, scannable responses
+        "I couldn't find any information about *[topic]* in your Jira or Confluence."
+        - Use single asterisks (*text*) for bold, NOT double asterisks (**text**)
+        - DO NOT include sources when no relevant information is found
         - Maintain a conversational and professional tone
 
-        Use the following context from Jira and Confluence to answer this question:
+        *Question:* {user_query}
 
-        **Question:** {user_query}
-
-        **Context:**
+        *Context:*
         {context}
 
-        Please provide a helpful answer based on the above context. Format your response with markdown."""
+        Provide a brief, helpful answer (max 3-4 lines) formatted for Slack. Only relevant sources will be added separately."""
 
         try:
-            response = await asyncio.to_thread(self.llm.generate_content, prompt)
+            response = await asyncio.to_thread(
+                self.openai_client.chat.completions.create,
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant for the Inabia team. Follow the instructions precisely and keep responses concise.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=4000,
+                top_p=0.9,
+            )
 
-            response_text = response.text
+            response_text = response.choices[0].message.content.strip()
 
             if sources:
-                sources_text = "\n\n📚 **Sources:**\n"
+                sources_text = "\n\n📚 *Sources:*\n"
                 for source in sources[:3]:
-                    sources_text += f"• [{source['title']}]({source['url']}) (Space: {source['space']})\n"
+                    try:
+
+                        sources_text += f"• <{source["url"]}|{source.get('title', 'View Document')}>\n"
+                    except Exception as e:
+                        sources_text += f"• {source['url']}\n"
                 response_text += sources_text
 
             return response_text
 
-        except Exception as e:
-            return f"Error generating response: {str(e)}"
+        except Exception:
+            return f"Sorry, I encountered an error while generating the response. Please try again."

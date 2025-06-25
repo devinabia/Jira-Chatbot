@@ -24,3 +24,4 @@ class Secrets:
 
     CONFLUENCE_USER = os.getenv("CONFLUENCE_USER")
     CONFLUENCE_TOKEN = os.getenv("CONFLUENCE_TOKEN")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
