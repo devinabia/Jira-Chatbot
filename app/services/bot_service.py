@@ -214,8 +214,7 @@ class BotService:
                 sources_text = "\n\n📚 *Sources:*\n"
                 for source in sources[:3]:
                     try:
-
-                        sources_text += f"• <{source["url"]}|{source.get('title', 'View Document')}>\n"
+                        sources_text += f"• <{source['url']}|{source.get('title', 'View Document')}>\n"
                     except Exception as e:
                         sources_text += f"• {source['url']}\n"
                 response_text += sources_text
