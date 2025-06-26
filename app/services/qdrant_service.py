@@ -10,6 +10,7 @@ import time
 from typing import List, Dict, Any
 import logging
 from app.core.secrets import config_secrets
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class QdrantService:
@@ -32,6 +33,27 @@ class QdrantService:
         self.auth = (
             config_secrets.CONFLUENCE_USER,
             config_secrets.CONFLUENCE_TOKEN,
+        )
+
+        # Initialize LangChain text splitter
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, 
+            chunk_overlap=200, 
+            length_function=len, 
+            separators=[ 
+                "\n\n",  # Paragraphs (highest priority)
+                "\n",  # Lines
+                " ",  # Words
+                ".",  # Sentences
+                ",",  # Clauses
+                "\u200b",  # Zero-width space
+                "\uff0c",  # Fullwidth comma
+                "\u3001",  # Ideographic comma
+                "\uff0e",  # Fullwidth full stop
+                "\u3002",  # Ideographic full stop
+                "",  # Characters (lowest priority)
+            ],
+            keep_separator=True,  # Keep separators for better context
         )
 
     async def _get_embedding(self, text: str) -> list:
@@ -445,31 +467,52 @@ class QdrantService:
             logging.error(f"Error in extract_jira_data: {type(e).__name__}: {e}")
             raise
 
-    def chunk_text(
-        self, text: str, chunk_size: int = 500, overlap: int = 100
-    ) -> List[str]:
-        """Split text into overlapping chunks"""
-        if len(text) <= chunk_size:
+    def chunk_text_with_langchain(self, text: str, title: str = "") -> List[str]:
+        """
+        Single chunking function using LangChain RecursiveCharacterTextSplitter
+
+        Args:
+            text: Text to chunk
+            title: Optional document title for context
+
+        Returns:
+            List of chunked text with optional context
+        """
+        try:
+            # Clean the text
+            text = text.strip()
+            if not text:
+                return []
+
+            # For very short documents, don't split at all - keep them whole
+            if len(text) <= 200:
+                if title and title.strip():
+                    return [f"Document: {title}\n\n{text}"]
+                return [text]
+
+            # Use LangChain text splitter for longer documents
+            chunks = self.text_splitter.split_text(text)
+
+            # Don't filter out ANY chunks - keep everything, even short ones
+            filtered_chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+
+            # Add document context to each chunk for better searchability
+            if title and title.strip():
+                contextual_chunks = []
+                for chunk in filtered_chunks:
+                    # Add title context at the beginning of each chunk
+                    contextual_chunk = f"Document: {title}\n\n{chunk}"
+                    contextual_chunks.append(contextual_chunk)
+                return contextual_chunks
+
+            return filtered_chunks
+
+        except Exception as e:
+            logging.error(f"Error in LangChain chunking: {e}")
+            # Fallback to keep the original text intact
+            if title and title.strip():
+                return [f"Document: {title}\n\n{text}"]
             return [text]
-
-        chunks = []
-        start = 0
-
-        while start < len(text):
-            end = start + chunk_size
-            chunk = text[start:end]
-
-            # Try to break at word boundaries
-            if end < len(text):
-                last_space = chunk.rfind(" ")
-                if last_space > start + chunk_size // 2:
-                    end = start + last_space
-                    chunk = text[start:end]
-
-            chunks.append(chunk.strip())
-            start = end - overlap
-
-        return chunks
 
     def clear_collection(self):
         """Delete and recreate the collection"""
@@ -486,23 +529,27 @@ class QdrantService:
             raise
 
     def dump_all_data_to_qdrant(self) -> Dict[str, Any]:
-        """Dump only Confluence data to Qdrant (deletes and recreates collection)"""
+        """Dump both Confluence AND Jira data to Qdrant (deletes and recreates collection)"""
         try:
-            logging.info("Starting data dump to Qdrant...")
+            logging.info("Starting data dump to Qdrant with LangChain chunking...")
 
-            # Extract data only from Confluence
+            # Extract data from BOTH sources
             confluence_docs = []
-            jira_docs = []  # Keep empty for now
+            jira_docs = []
 
             try:
                 logging.info("Extracting Confluence data...")
                 confluence_docs = self.extract_confluence_data()
             except Exception as e:
                 logging.error(f"Failed to extract Confluence data: {e}")
-                raise
+                # Don't raise - continue with Jira even if Confluence fails
 
-            # Skip Jira extraction completely
-            logging.info("Skipping Jira extraction - only processing Confluence data")
+            try:
+                logging.info("Extracting Jira data...")
+                jira_docs = self.extract_jira_data()
+            except Exception as e:
+                logging.error(f"Failed to extract Jira data: {e}")
+                # Don't raise - continue with Confluence even if Jira fails
 
             all_documents = confluence_docs + jira_docs
 
@@ -516,15 +563,23 @@ class QdrantService:
                 }
 
             # Process documents into chunks and create embeddings
-            logging.info(f"Processing {len(all_documents)} documents into chunks...")
+            logging.info(
+                f"Processing {len(all_documents)} documents into chunks with LangChain..."
+            )
+            logging.info(
+                f"Breakdown: {len(confluence_docs)} Confluence + {len(jira_docs)} Jira documents"
+            )
             points = []
             all_chunks = []
             chunk_metadata = []
 
-            # First pass: collect all chunks
+            # First pass: collect all chunks using LangChain
             for doc_idx, doc in enumerate(all_documents):
                 try:
-                    chunks = self.chunk_text(doc["text"])
+                    # Use LangChain chunking with document context
+                    chunks = self.chunk_text_with_langchain(
+                        doc["text"], title=doc.get("title", "")
+                    )
 
                     for i, chunk in enumerate(chunks):
                         if chunk.strip():
@@ -587,10 +642,10 @@ class QdrantService:
                     logging.error(f"Error uploading batch {i//batch_size + 1}: {e}")
                     raise
 
-            logging.info("Data dump completed successfully!")
+            logging.info("Data dump completed successfully with LangChain chunking!")
             return {
                 "status": "success",
-                "message": "Confluence data successfully dumped to Qdrant",
+                "message": "Both Confluence and Jira data successfully dumped to Qdrant with LangChain chunking",
                 "total_documents": len(all_documents),
                 "total_chunks": total_points,
                 "confluence_documents": len(confluence_docs),

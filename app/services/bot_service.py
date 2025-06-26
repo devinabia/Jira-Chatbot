@@ -8,6 +8,7 @@ import google.generativeai as genai
 import asyncio
 from openai import OpenAI
 from app.utilities import Utils
+import logging
 
 load_dotenv()
 
@@ -16,14 +17,6 @@ class BotService:
     def __init__(self):
 
         genai.configure(api_key=config_secrets.GEMINI_KEY)
-        self.llm = genai.GenerativeModel(
-            model_name=config_secrets.GEMINI_LLM,
-            generation_config={
-                "temperature": 0.1,
-                "top_p": 0.1,
-                "max_output_tokens": 8192,
-            },
-        )
 
         self.qdrant_client = QdrantClient(
             url=config_secrets.QDRANT_URL,
@@ -53,16 +46,15 @@ class BotService:
             query_vector = await self._get_embedding(user_query)
             search_results = await asyncio.to_thread(
                 self.qdrant_client.search,
-                # collection_name=config_secrets.QDRANT_COLLECTION,
                 collection_name=config_secrets.QDRANT_COLLECTION,
                 query_vector=query_vector,
-                limit=10,
+                limit=8,
                 with_payload=True,
             )
             if not search_results:
                 return {
                     "status": "success",
-                    "retrieved_content": [],  # Return empty list instead of string
+                    "retrieved_content": [],
                     "sources": [],
                     "total_pages_searched": 0,
                 }
@@ -71,7 +63,7 @@ class BotService:
             sources = []
             seen_urls = set()
 
-            for result in search_results:
+            for i, result in enumerate(search_results):
                 payload = result.payload
                 content = payload.get("text", "")
 
@@ -139,6 +131,14 @@ class BotService:
         for i, doc in enumerate(retrieved_content, 1):
             # Ensure doc is a dictionary before calling .get()
             if isinstance(doc, dict):
+                content = doc.get("content", "")  # Now this will work!
+
+                if not content.strip():
+                    logging.warning(
+                        f"Document {i} has no content: {doc.get('title', 'Unknown')}"
+                    )
+                    continue
+
                 score_info = (
                     f" (Relevance: {doc.get('score', 0):.3f})"
                     if doc.get("score")
@@ -146,23 +146,25 @@ class BotService:
                 )
                 context_part = f"""
                 Document {i}: {doc['title']}{score_info} (Space: {doc['space']})
-                Content: {doc['content']}
+                Content: {content}
                 URL: {doc['url']}
                 ---"""
                 context_parts.append(context_part)
 
-        return (
+        final_context = (
             "\n".join(context_parts)
             if context_parts
             else "No relevant information found in the knowledge base."
         )
 
+        return final_context
+
     async def _generate_response(self, user_query: str, context: str, sources) -> str:
-        prompt = f"""You are a helpful assistant for the Inabia team, answering questions using internal documentation from Jira and Confluence.
+        prompt = f"""You are a helpful assistant for the Inabia team, answering questions using available information.
 
         Your role:
-        - Answer questions using ONLY the provided context from Jira and Confluence
-        - Be accurate — if the answer isn't in the context, say so clearly and naturally
+        - Answer questions using the provided context 
+        - Extract key information from the context to answer the question
         - Keep responses to 3-4 lines maximum
         - Format for Slack using only supported markdown
 
@@ -171,28 +173,27 @@ class BotService:
         - Use _italic_ for secondary emphasis
         - Use `code` for technical terms
         - Use • for bullet points if needed
-        - For links, just use the plain URL (no markdown link syntax)
-        - DO NOT use headers (# ## ###) - Slack doesn't support them
-        - DO NOT use [text](url) link format - Slack doesn't support it
         - Keep formatting minimal and clean
-
+        
         Response Guidelines:
-        - DO NOT sound like a bot — avoid phrases like "Based on the provided context"
-        - Keep answers concise and direct
-        - If you can't find relevant information, say:
-        "I couldn't find any information about *[topic]* in your Jira or Confluence."
+        - Be helpful and direct
+        - Match variations in terminology (e.g., "iCode", "i code", "I-Code" are all the same)
+        - If no relevant information is available, simply say you couldn't find information about the topic
+        - Don't mention sources, documents, or knowledge bases in your response
         - Use single asterisks (*text*) for bold, NOT double asterisks (**text**)
-        - If no relevant information is found, DO NOT include any sources in your response
-        - NEVER add sources when you say information wasn't found
         - Maintain a conversational and professional tone
+
+        CRITICAL: If no relevant information exists, respond EXACTLY like this:
+        "I couldn't find information about *[topic]*."
+        
+        DO NOT mention: documentation, documents, sources, knowledge base, database, or any reference to where information comes from.
 
         *Question:* {user_query}
 
         *Context:*
         {context}
 
-        Provide a brief, helpful answer (max 3-4 lines) formatted for Slack. Do NOT include sources if no relevant information is found."""
-
+        Provide a brief, helpful answer (max 3-4 lines) formatted for Slack. Answer naturally without referencing where the information comes from."""
         try:
             response = await asyncio.to_thread(
                 self.openai_client.chat.completions.create,
@@ -218,6 +219,7 @@ class BotService:
                 "not found",
                 "don't have information",
                 "no relevant information",
+                "couldn't find specific information",
             ]
 
             response_lower = response_text.lower()
@@ -235,5 +237,5 @@ class BotService:
 
             return response_text
 
-        except Exception:
+        except Exception as e:
             return f"Sorry, I encountered an error while generating the response. Please try again."
