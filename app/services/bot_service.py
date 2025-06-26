@@ -160,54 +160,29 @@ class BotService:
         return final_context
 
     async def _generate_response(self, user_query: str, context: str, sources) -> str:
-        prompt = f"""You are a helpful assistant for the Inabia team, answering questions using available information.
+        prompt = f"""User asked: {user_query}
 
-        Your role:
-        - Answer questions using the provided context 
-        - Extract key information from the context to answer the question
-        - Keep responses to 3-4 lines maximum
-        - Format for Slack using only supported markdown
+    Context: {context}
 
-        Slack Formatting Guidelines:
-        - Use *bold* for emphasis (single asterisks)
-        - Use _italic_ for secondary emphasis
-        - Use `code` for technical terms
-        - Use • for bullet points if needed
-        - Keep formatting minimal and clean
-        
-        Response Guidelines:
-        - Be helpful and direct
-        - Match variations in terminology (e.g., "iCode", "i code", "I-Code" are all the same)
-        - If no relevant information is available, simply say you couldn't find information about the topic
-        - Don't mention sources, documents, or knowledge bases in your response
-        - Use single asterisks (*text*) for bold, NOT double asterisks (**text**)
-        - Maintain a conversational and professional tone
+    Instructions:
+    - Answer the question using the context above in 2-3 sentences
+    - Use the context even if it's not a perfect match - if there's relevant or related information, use it
+    - Be flexible with matching - if the context contains information that's close to or related to the question, provide that information
+    - Don't require exact keyword matches - use semantic understanding to find relevant content
+    - Format for Slack using only supported markdown
+    - Use *bold* for emphasis (single asterisks only)
+    - Use `code` for technical terms
+    - Only say "I couldn't find information about *{user_query}*" if the context is completely unrelated to the question
 
-        CRITICAL: If no relevant information exists, respond EXACTLY like this:
-        "I couldn't find information about *[topic]*."
-        
-        DO NOT mention: documentation, documents, sources, knowledge base, database, or any reference to where information comes from.
+    Answer:"""
 
-        *Question:* {user_query}
-
-        *Context:*
-        {context}
-
-        Provide a brief, helpful answer (max 3-4 lines) formatted for Slack. Answer naturally without referencing where the information comes from."""
         try:
             response = await asyncio.to_thread(
                 self.openai_client.chat.completions.create,
                 model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant for the Inabia team. Follow the instructions precisely and keep responses concise.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
-                max_tokens=4000,
-                top_p=0.9,
+                max_tokens=8192,
             )
 
             response_text = response.choices[0].message.content.strip()
@@ -225,7 +200,6 @@ class BotService:
             response_lower = response_text.lower()
             no_info_found = any(phrase in response_lower for phrase in no_info_phrases)
 
-            # Only add sources if information was actually found and used
             if sources and not no_info_found:
                 sources_text = "\n\n📚 *Sources:*\n"
                 for source in sources[:3]:
